@@ -1,4 +1,4 @@
-package zcache
+package lru
 
 import "container/list"
 
