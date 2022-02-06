@@ -13,10 +13,16 @@ go build -o server pickpeer.go
 sleep 3
 echo ">>> start test"
 
-#同时执行 
+#同时执行
 curl "http://127.0.0.1:9999/api?key=Tom" &
 curl "http://127.0.0.1:9999/api?key=Tom" &
 curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom" &
+curl "http://127.0.0.1:9999/api?key=Tom"
 
 
 wait

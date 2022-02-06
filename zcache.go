@@ -2,8 +2,10 @@ package zcache
 
 import (
 	"fmt"
+	xSingleflight "golang.org/x/sync/singleflight"
 	"log"
 	"sync"
+	"zcache/singleflight"
 )
 
 // 接受key  检查是否被缓存  是 返回缓存值
@@ -34,10 +36,12 @@ func (f GetterFunc) Get(key string) ([]byte, error) { // 定义一个函数类�
 }
 
 type Group struct {
-	name      string     // 唯一的名称 name
-	getter    Getter     // 缓存未命中时获取源数据的回调(callback)
-	maniCache cache      // 并发缓存
-	peers     PeerPicker // 节点选择
+	name      string               // 唯一的名称 name
+	getter    Getter               // 缓存未命中时获取源数据的回调(callback)
+	maniCache cache                // 并发缓存
+	peers     PeerPicker           // 节点选择
+	loader    *singleflight.Group  // 防止缓存击穿  singleflight 实现
+	xLoader   *xSingleflight.Group // 准官方库golang.org/x/sync/singleflight
 }
 
 var (
@@ -57,6 +61,8 @@ func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
 		name:      name,
 		getter:    getter,
 		maniCache: cache{cacheBytes: cacheBytes},
+		loader:    &singleflight.Group{},
+		xLoader:   &xSingleflight.Group{},
 	}
 	groups[name] = g
 	return g
@@ -87,19 +93,27 @@ func (g *Group) Get(key string) (ByteView, error) {
 
 func (g *Group) load(key string) (value ByteView, err error) {
 
-	// 选择节点，若非本机节点   调用 getFromPeer() 从远程获取。
-	if g.peers != nil {
-		if peer, ok := g.peers.PickPeer(key); ok {
-			log.Println("[zcache] get from peer:", peer)
-			if value, err = g.getFromPeer(peer, key); err == nil {
-				return value, nil
+	//view, err := g.loader.Do(key, func() (interface{}, error) {
+	view, err, _ := g.xLoader.Do(key, func() (interface{}, error) {
+		// 选择节点，若非本机节点   调用 getFromPeer() 从远程获取。
+		if g.peers != nil {
+			if peer, ok := g.peers.PickPeer(key); ok {
+				log.Println("[zcache] get from peer:", peer)
+				if value, err = g.getFromPeer(peer, key); err == nil {
+					return value, nil
+				}
+				log.Println("[zcache] Failed to get from peer", err)
 			}
-			log.Println("[zcache] Failed to get from peer", err)
 		}
+		// 回退到getLocally
+		return g.getLocally(key)
+	})
+
+	if err == nil {
+		return view.(ByteView), nil
 	}
 
-	// 回退到getLocally
-	return g.getLocally(key)
+	return
 }
 
 func (g *Group) getLocally(key string) (ByteView, error) {
