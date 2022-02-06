@@ -3,12 +3,14 @@ package zcache
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"zcache/api"
 	"zcache/consistenthash"
 )
 
@@ -67,8 +69,16 @@ func (h *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := proto.Marshal(&api.Response{
+		Value: view.ByteSlice(),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/octet-stream")
-	_, _ = w.Write(view.ByteSlice())
+	_, _ = w.Write(body)
 }
 
 // 确保struct httpGetter 实现了接口 PeerGetter
@@ -79,7 +89,7 @@ type httpGetter struct {
 }
 
 // Get 获取返回值，并转换为 []bytes 类型
-func (h *httpGetter) Get(group string, key string) ([]byte, error) {
+/*func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 	getUrl := fmt.Sprintf(
 		"%v%v/%v",
 		h.baseURL,
@@ -103,6 +113,36 @@ func (h *httpGetter) Get(group string, key string) ([]byte, error) {
 	}
 
 	return bytes, nil
+}*/
+
+func (h *httpGetter) Get(req *api.Request, res *api.Response) error {
+	getUrl := fmt.Sprintf(
+		"%v%v/%v",
+		h.baseURL,
+		url.QueryEscape(req.Group),
+		url.QueryEscape(req.Key),
+	)
+	log.Println("http.Get url:", getUrl)
+	resp, err := http.Get(getUrl)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned:%v", resp.Status)
+	}
+
+	bytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response body: %v", err)
+	}
+
+	if err = proto.Unmarshal(bytes, res); err != nil {
+		return fmt.Errorf("decoding response body: %v", err)
+	}
+
+	return nil
 }
 
 // 确保struct HTTPPool 实现了接口 PeerPicker
