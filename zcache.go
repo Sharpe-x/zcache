@@ -34,9 +34,10 @@ func (f GetterFunc) Get(key string) ([]byte, error) { // 定义一个函数类�
 }
 
 type Group struct {
-	name      string // 唯一的名称 name
-	getter    Getter // 缓存未命中时获取源数据的回调(callback)
-	maniCache cache  // 并发缓存
+	name      string     // 唯一的名称 name
+	getter    Getter     // 缓存未命中时获取源数据的回调(callback)
+	maniCache cache      // 并发缓存
+	peers     PeerPicker // 节点选择
 }
 
 var (
@@ -84,7 +85,20 @@ func (g *Group) Get(key string) (ByteView, error) {
 
 }
 
-func (g *Group) load(key string) (ByteView, error) {
+func (g *Group) load(key string) (value ByteView, err error) {
+
+	// 选择节点，若非本机节点   调用 getFromPeer() 从远程获取。
+	if g.peers != nil {
+		if peer, ok := g.peers.PickPeer(key); ok {
+			log.Println("[zcache] get from peer:", peer)
+			if value, err = g.getFromPeer(peer, key); err == nil {
+				return value, nil
+			}
+			log.Println("[zcache] Failed to get from peer", err)
+		}
+	}
+
+	// 回退到getLocally
 	return g.getLocally(key)
 }
 
@@ -104,4 +118,24 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 
 func (g *Group) populateCache(key string, value ByteView) {
 	g.maniCache.add(key, value)
+}
+
+//RegisterPeers  将实现了PeerPicker 接口的 HTTPPool 注入到 Group
+func (g *Group) RegisterPeers(peers PeerPicker) {
+	if g.peers != nil {
+		panic("RegisterPeerPicker called more than once")
+	}
+	g.peers = peers
+}
+
+// 访问远程节点，获取缓存值。
+func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
+	bytes, err := peer.Get(g.name, key)
+	if err != nil {
+		return ByteView{}, err
+	}
+
+	return ByteView{
+		b: bytes,
+	}, nil
 }
